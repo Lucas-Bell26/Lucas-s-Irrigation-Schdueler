@@ -1,0 +1,83 @@
+import subprocess
+import os
+import time
+import re
+
+# Define a log file path
+streamlit_log_file = 'streamlit_output.log'
+
+# Run the Streamlit application in the background and redirect output to a log file
+# Do not specify port here, let Streamlit pick one, we'll read it from the log
+print(f"Starting Streamlit app in the background. Output redirected to '{streamlit_log_file}'.")
+with open(streamlit_log_file, 'w') as f:
+    streamlit_process = subprocess.Popen(['streamlit', 'run', 'my_irrigation_app.py'], stdout=f, stderr=f)
+
+# Wait for Streamlit to start and get the port from the log file
+actual_streamlit_port = None
+start_time = time.time()
+timeout = 30 # seconds to wait for streamlit to start
+
+print("Waiting for Streamlit to start and determine its port...")
+while actual_streamlit_port is None and (time.time() - start_time < timeout):
+    try:
+        if os.path.exists(streamlit_log_file):
+            with open(streamlit_log_file, 'r') as f:
+                log_content = f.read()
+                match = re.search(r"External URL: .*?:(\d+)", log_content)
+                if match:
+                    actual_streamlit_port = int(match.group(1))
+                    print(f"Streamlit detected running on port: {actual_streamlit_port}")
+                    break
+    except Exception as e:
+        print(f"Error reading log file: {e}")
+    time.sleep(1)
+
+if actual_streamlit_port is None:
+    print(f"Could not determine Streamlit port from log '{streamlit_log_file}' within {timeout} seconds. Attempting to use default port 8501.")
+    # Fallback to default port if detection fails
+    actual_streamlit_port = 8501
+else:
+    print(f"Streamlit application is running on port {actual_streamlit_port}.")
+
+
+
+import subprocess
+import os
+import time
+import re
+from pyngrok import ngrok
+from pyngrok.exception import PyngrokNgrokHTTPError
+
+# The actual_streamlit_port should have been determined by the previous step.
+# If this cell is run independently, or if the previous detection failed, it defaults to 8501.
+# For continuity, we will use the actual_streamlit_port variable from the kernel state if available, 
+# otherwise, it would have been set to 8501 in the previous block.
+
+public_url = None
+max_retries = 5
+
+print(f"Attempting to establish ngrok tunnel to port {actual_streamlit_port}...")
+for attempt in range(max_retries):
+    try:
+        # Ensure any previous tunnels are killed before trying to connect
+        ngrok.kill() # Terminate any tunnels from previous attempts in this session
+        time.sleep(1) # Give ngrok a moment to clean up
+
+        # Establish an ngrok tunnel to the actual Streamlit port
+        public_url = ngrok.connect(actual_streamlit_port, "http")
+        print(f"Your Streamlit app is live at: {public_url}")
+        break # Exit loop if successful
+    except PyngrokNgrokHTTPError as e:
+        if "already online" in str(e):
+            print(f"Attempt {attempt + 1}/{max_retries}: Existing ngrok tunnel detected. Terminating and retrying...")
+            ngrok.kill()
+            time.sleep(5 * (attempt + 1)) # Increase sleep time for subsequent retries (5s, 10s, 15s...)
+        else:
+            print(f"Attempt {attempt + 1}/{max_retries}: An unexpected ngrok error occurred: {e}")
+            break # Exit loop for other errors
+    except Exception as e:
+        print(f"Attempt {attempt + 1}/{max_retries}: An unexpected error occurred: {e}")
+        break # Exit loop for other errors
+
+if public_url is None:
+    print("Could not establish ngrok tunnel after multiple attempts. Please check your ngrok configuration and ensure no other ngrok processes are running.")
